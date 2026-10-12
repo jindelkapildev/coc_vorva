@@ -83,10 +83,9 @@ async def fetch_coc_player(player_tag):
 @app.route('/')
 @app.route('/live_wars')
 async def home():
-    """Homepage: Displays all active/cached war records stored in Redis using the original light layout."""
+    """Homepage: Displays all active/cached war records stored in Redis using modern card layout."""
     if not redis_client:
         return "Redis is not connected.", 500
-
     try:
         live_wars_list = []
         async for key in redis_client.scan_iter("war:*"):
@@ -102,7 +101,6 @@ async def home():
                         data = json.loads(cached_json)
             except Exception as e:
                 print(f"⚠️ Error reading key {key}: {e}")
-
             if data:
                 conflict_data = data.get('conflict_data', {})
                 war_meta = conflict_data.get('war_metadata', {})
@@ -114,73 +112,411 @@ async def home():
                     "doc_id": doc_id,
                     "clan_a_name": clan_a.get('name', 'Unknown Clan A'),
                     "clan_a_tag": clan_a.get('tag', ''),
+                    "clan_a_badge": clan_a.get('badge', ''),
                     "clan_b_name": clan_b.get('name', 'Unknown Clan B'),
                     "clan_b_tag": clan_b.get('tag', ''),
+                    "clan_b_badge": clan_b.get('badge', ''),
                     "status": war_meta.get('status', 'N/A'),
                     "war_ends": war_meta.get('war_ends', 'N/A')
                 })
 
-        rows_html = ""
+        cards_html = ""
         for war in live_wars_list:
-            rows_html += f"""
-            <tr>
-                <td style="font-family: monospace;">{war['doc_id']}</td>
-                <td><b>{war['clan_a_name']}</b><br><span style="font-size:12px; color: gray;">{war['clan_a_tag']}</span></td>
-                <td><b>{war['clan_b_name']}</b><br><span style="font-size:12px; color: gray;">{war['clan_b_tag']}</span></td>
-                <td><span style="color: green; font-weight: bold;">{war['status']}</span></td>
-                <td style="font-size: 14px;">{war['war_ends']}</td>
-                <td><a href="/war_conflicts?{war['doc_id']}" style="background-color: #2980b9; color: white; padding: 6px 12px; border-radius: 4px; font-size: 13px; font-weight: bold; text-decoration: none;">Inspect Match</a></td>
-            </tr>
+            status = war['status'].lower() if war['status'] else ''
+            if 'progress' in status or 'battle' in status:
+                status_class = "status-live"
+                status_label = "● LIVE"
+            elif 'prep' in status:
+                status_class = "status-prep"
+                status_label = "◐ PREP"
+            elif 'end' in status or 'ended' in status:
+                status_class = "status-ended"
+                status_label = "○ ENDED"
+            else:
+                status_class = "status-unknown"
+                status_label = war['status'] or "N/A"
+
+            clan_a_badge = war['clan_a_badge'] or "https://api-assets.clashofclans.com/leagues/72/e--YMyIexEQQhE4imLoJcwhYn6Uy8KqlgyY3_kFV6t4.png"
+            clan_b_badge = war['clan_b_badge'] or "https://api-assets.clashofclans.com/leagues/72/e--YMyIexEQQhE4imLoJcwhYn6Uy8KqlgyY3_kFV6t4.png"
+
+            cards_html += f"""
+            <div class="war-card">
+                <div class="card-header">
+                    <span class="doc-id">#{war['doc_id']}</span>
+                    <span class="status-badge {status_class}">{status_label}</span>
+                </div>
+                
+                <div class="clans-vs">
+                    <div class="clan-side">
+                        <img class="clan-badge" src="{clan_a_badge}" alt="Clan A" onerror="this.src='https://api-assets.clashofclans.com/leagues/72/e--YMyIexEQQhE4imLoJcwhYn6Uy8KqlgyY3_kFV6t4.png'">
+                        <div class="clan-info">
+                            <div class="clan-name">{war['clan_a_name']}</div>
+                            <div class="clan-tag">{war['clan_a_tag']}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="vs-badge">VS</div>
+                    
+                    <div class="clan-side">
+                        <img class="clan-badge" src="{clan_b_badge}" alt="Clan B" onerror="this.src='https://api-assets.clashofclans.com/leagues/72/e--YMyIexEQQhE4imLoJcwhYn6Uy8KqlgyY3_kFV6t4.png'">
+                        <div class="clan-info">
+                            <div class="clan-name">{war['clan_b_name']}</div>
+                            <div class="clan-tag">{war['clan_b_tag']}</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card-footer">
+                    <div class="war-ends">
+                        <span class="ends-label">Ends</span>
+                        <span class="ends-value">{war['war_ends']}</span>
+                    </div>
+                    <a href="/war_conflicts?{war['doc_id']}" class="inspect-btn">
+                        Inspect Match →
+                    </a>
+                </div>
+            </div>
             """
 
-        if not rows_html:
-            rows_html = "<tr><td colspan='6' style='text-align:center; padding: 15px; color: gray;'>No live wars currently cached in Redis.</td></tr>"
+        if not cards_html:
+            cards_html = """
+            <div class="empty-state">
+                <div class="empty-icon">⚔️</div>
+                <h3>No Live Wars</h3>
+                <p>No active war records are currently cached in Redis.</p>
+            </div>
+            """
 
         full_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Chocolate Clash: Live Redis Wars</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chocolate Clash · Live Wars</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body {{ font-family: "Times New Roman", Times, serif; font-size: 16px; background-color: #ffffff; color: #000000; margin: 0; padding: 20px; }}
-        #container {{ width: 85%; max-width: 1100px; margin: 20px auto; border: 1px solid black; text-align: center; padding: 20px; background-color: #ffffff; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }}
-        #title {{ font-weight: bold; font-size: 32px; color: #000000; }}
-        #top {{ display: block; text-align: center; font-size: 16px; margin-bottom: 20px; color: #333; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
-        th {{ border-bottom: 2px solid black; padding: 10px; font-size: 15px; text-align: left; background-color: #f8f9fa; }}
-        td {{ border-bottom: 1px solid gray; font-size: 15px; text-align: left; padding: 10px 8px; vertical-align: middle; color: #000000; }}
-        a {{ text-decoration: none; color: blue; }}
+        :root {{
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --surface-hover: #222633;
+            --border: #2a2f3d;
+            --text: #f0f2f5;
+            --text-muted: #8b92a5;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --radius: 16px;
+            --shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+        }}
+
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+
+        body {{
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            line-height: 1.5;
+        }}
+
+        /* Subtle background pattern */
+        body::before {{
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: 
+                radial-gradient(ellipse 80% 50% at 20% -20%, rgba(59, 130, 246, 0.12), transparent),
+                radial-gradient(ellipse 60% 40% at 80% 100%, rgba(16, 185, 129, 0.08), transparent);
+            pointer-events: none;
+            z-index: 0;
+        }}
+
+        .page {{
+            position: relative;
+            z-index: 1;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 24px 60px;
+        }}
+
+        /* Header */
+        .header {{
+            text-align: center;
+            margin-bottom: 48px;
+        }}
+
+        .logo {{
+            font-size: 2.25rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            background: linear-gradient(135deg, #60a5fa, #34d399);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }}
+
+        .subtitle {{
+            color: var(--text-muted);
+            font-size: 1rem;
+            font-weight: 500;
+        }}
+
+        .subtitle span {{
+            color: var(--success);
+        }}
+
+        /* Cards Grid */
+        .cards-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+            gap: 24px;
+        }}
+
+        /* War Card */
+        .war-card {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+            box-shadow: var(--shadow);
+        }}
+
+        .war-card:hover {{
+            transform: translateY(-4px);
+            border-color: #3b82f680;
+            box-shadow: 0 12px 40px rgba(59, 130, 246, 0.15);
+        }}
+
+        .card-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+
+        .doc-id {{
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            background: #12151e;
+            padding: 4px 10px;
+            border-radius: 6px;
+            letter-spacing: 0.02em;
+        }}
+
+        .status-badge {{
+            font-size: 0.72rem;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 999px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }}
+
+        .status-live {{
+            background: rgba(16, 185, 129, 0.15);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }}
+
+        .status-prep {{
+            background: rgba(245, 158, 11, 0.15);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }}
+
+        .status-ended {{
+            background: rgba(139, 146, 165, 0.15);
+            color: #94a3b8;
+            border: 1px solid rgba(139, 146, 165, 0.3);
+        }}
+
+        .status-unknown {{
+            background: rgba(59, 130, 246, 0.15);
+            color: #60a5fa;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }}
+
+        /* Clans VS section */
+        .clans-vs {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }}
+
+        .clan-side {{
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            text-align: center;
+        }}
+
+        .clan-badge {{
+            width: 56px;
+            height: 56px;
+            border-radius: 12px;
+            background: #12151e;
+            object-fit: contain;
+            border: 1px solid var(--border);
+        }}
+
+        .clan-info {{
+            min-width: 0;
+        }}
+
+        .clan-name {{
+            font-weight: 600;
+            font-size: 0.95rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 130px;
+        }}
+
+        .clan-tag {{
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            margin-top: 2px;
+        }}
+
+        .vs-badge {{
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: var(--text-muted);
+            background: #12151e;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid var(--border);
+            flex-shrink: 0;
+            letter-spacing: 0.05em;
+        }}
+
+        /* Footer */
+        .card-footer {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 14px;
+            border-top: 1px solid var(--border);
+            gap: 12px;
+        }}
+
+        .war-ends {{
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }}
+
+        .ends-label {{
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-weight: 500;
+        }}
+
+        .ends-value {{
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text);
+        }}
+
+        .inspect-btn {{
+            background: var(--accent);
+            color: white;
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 9px 16px;
+            border-radius: 10px;
+            text-decoration: none;
+            transition: background 0.15s ease, transform 0.15s ease;
+            white-space: nowrap;
+        }}
+
+        .inspect-btn:hover {{
+            background: var(--accent-hover);
+            transform: scale(1.03);
+        }}
+
+        /* Empty state */
+        .empty-state {{
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 80px 20px;
+            background: var(--surface);
+            border: 1px dashed var(--border);
+            border-radius: var(--radius);
+        }}
+
+        .empty-icon {{
+            font-size: 3rem;
+            margin-bottom: 16px;
+            opacity: 0.6;
+        }}
+
+        .empty-state h3 {{
+            font-size: 1.25rem;
+            margin-bottom: 8px;
+        }}
+
+        .empty-state p {{
+            color: var(--text-muted);
+        }}
+
+        /* Responsive */
+        @media (max-width: 640px) {{
+            .page {{
+                padding: 28px 16px 40px;
+            }}
+
+            .logo {{
+                font-size: 1.75rem;
+            }}
+
+            .cards-grid {{
+                grid-template-columns: 1fr;
+            }}
+
+            .clan-name {{
+                max-width: 110px;
+            }}
+        }}
     </style>
 </head>
 <body>
-    <div id="container">
-        <span id="title">FWA ChocolateClash</span>
-        <br><br>
-        <span id="top">
-            <b>⚡ Live Redis War Records</b><br>
-            Showing active match data currently loaded in memory.
-        </span>
+    <div class="page">
+        <header class="header">
+            <h1 class="logo">FWA ChocolateClash</h1>
+            <p class="subtitle">⚡ <span>Live</span> Redis War Records</p>
+        </header>
 
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Clan A</th>
-                    <th>Opponent (Clan B)</th>
-                    <th>Status</th>
-                    <th>War Ends</th>
-                    <th>Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                {rows_html}
-            </tbody>
-        </table>
+        <div class="cards-grid">
+            {cards_html}
+        </div>
     </div>
 </body>
 </html>"""
         return full_html, 200
-
     except Exception as e:
         return f"Internal Error loading live wars: {str(e)}", 500
 
